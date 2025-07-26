@@ -1,0 +1,9 @@
+{
+  "bot_name": "Kinggbot",
+  "version": "1.0.0",
+  "language": "fa",
+  "admin_ids": [123456789, 987654321],
+  "prefix": "/",
+  "auto_save_interval": 300,
+  "logging": true
+}
