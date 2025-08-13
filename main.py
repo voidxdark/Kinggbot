@@ -1,105 +1,24 @@
 import asyncio
-import os
-import json
-import random
-from datetime import datetime
 from telethon import TelegramClient, events
 from telethon.tl.functions.account import UpdateProfileRequest
-from telethon.errors import SessionPasswordNeededError
-from telethon.sync import TelegramClient as SyncClient
-from telethon.sessions import StringSession
-from telebot import TeleBot
+from datetime import datetime
+import json
+import os
+import random
 
-# ===== تنظیمات =====
-BOT_TOKEN = "توکن_ربات_اینجا"
-ADMIN_ID = 5990546826
-SESSIONS_DIR = "sessions"
+api_id = 12701321
+api_hash = "83995b97cd109d02c1ead50c9f6f5605"
+admin_id = 5990546826
+SESSION_NAME = "my_session"
 
-FOSH_FILE = "fosh.json"
-ENEMY_FILE = "enemy.json"
-SILENT_FILE = "silent.json"
+# فایل‌ها برای ذخیره لیست‌ها
+fosh_file = "fosh.json"
+enemy_file = "enemy.json"
 
-RESPONSE_DELAY = 3  # تاخیر پاسخ به دشمن
-last_fosh_index = -1
+# تاخیر پیش‌فرض پاسخ به دشمن (ثانیه)
+response_delay = 3
 
-# ===== پوشه‌ها و فایل‌ها =====
-os.makedirs(SESSIONS_DIR, exist_ok=True)
-
-def load_list(filename):
-    if os.path.exists(filename):
-        with open(filename, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return []
-
-def save_list(filename, data):
-    with open(filename, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-fosh_list = load_list(FOSH_FILE)
-enemy_list = load_list(ENEMY_FILE)
-silent_list = load_list(SILENT_FILE)
-
-# ===== ربات ادمین برای مدیریت اکانت‌ها =====
-bot = TeleBot(BOT_TOKEN)
-
-@bot.message_handler(commands=["start"])
-def start_cmd(msg):
-    if msg.from_user.id != ADMIN_ID:
-        return
-    bot.reply_to(msg, "📌 سلام رئیس! برای اضافه کردن اکانت دستور /add رو بزن.")
-
-@bot.message_handler(commands=["add"])
-def add_account(msg):
-    if msg.from_user.id != ADMIN_ID:
-        return
-    bot.send_message(msg.chat.id, "📱 شماره اکانت رو با کد کشور بده (مثلا +989123456789):")
-    bot.register_next_step_handler(msg, process_phone)
-
-def process_phone(msg):
-    phone = msg.text.strip()
-    bot.send_message(msg.chat.id, "⌛ در حال ارسال کد ورود...")
-    asyncio.create_task(login_account(phone))
-
-async def login_account(phone):
-    session_name = os.path.join(SESSIONS_DIR, phone.replace("+", ""))
-    client = TelegramClient(session_name, api_id=YOUR_API_ID, api_hash="YOUR_API_HASH")
-    await client.connect()
-    if not await client.is_user_authorized():
-        await client.send_code_request(phone)
-        bot.send_message(ADMIN_ID, f"📩 کد ورود برای {phone} ارسال شد. کد رو بفرست:")
-        code = await wait_for_code()
-        try:
-            await client.sign_in(phone, code)
-        except SessionPasswordNeededError:
-            bot.send_message(ADMIN_ID, "🔐 این اکانت تایید دو مرحله‌ای داره. پسورد رو بفرست:")
-            password = await wait_for_code()
-            await client.sign_in(password=password)
-    await client.disconnect()
-    bot.send_message(ADMIN_ID, f"✅ اکانت {phone} اضافه شد.")
-
-# منتظر ورودی از ادمین
-async def wait_for_code():
-    loop = asyncio.get_event_loop()
-    future = loop.create_future()
-    def code_handler(msg):
-        if msg.from_user.id == ADMIN_ID:
-            future.set_result(msg.text.strip())
-    bot.register_message_handler(code_handler)
-    return await future
-
-# ===== سلف برای همه اکانت‌ها =====
-clients = []
-
-async def start_self_clients():
-    for file in os.listdir(SESSIONS_DIR):
-        if file.endswith(".session"):
-            session_path = os.path.join(SESSIONS_DIR, file)
-            client = TelegramClient(session_path, YOUR_API_ID, "YOUR_API_HASH")
-            await client.start()
-            register_handlers(client)
-            clients.append(client)
-    await asyncio.gather(*[c.run_until_disconnected() for c in clients])
-
+# تبدیل اعداد به فونت بالا
 def to_fancy_numbers(text):
     fancy_digits = {
         "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
@@ -107,128 +26,198 @@ def to_fancy_numbers(text):
     }
     return "".join(fancy_digits.get(ch, ch) for ch in text)
 
-async def update_last_name_with_time(client):
+# لود لیست از فایل
+def load_list(filename):
+    if os.path.exists(filename):
+        with open(filename, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
+# ذخیره لیست در فایل
+def save_list(filename, data):
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+# لود اولیه لیست‌ها
+foshall_list = load_list(fosh_file)
+enemyall_list = load_list(enemy_file)
+
+# ایندکس آخرین فحش ارسال شده به دشمن (برای جلوگیری از تکرار)
+last_fosh_index = -1
+
+client = TelegramClient(SESSION_NAME, api_id, api_hash)
+
+# آپدیت فامیلی با ساعت هر ۵ دقیقه
+async def update_last_name_with_time():
     while True:
         now = datetime.now()
         fancy_time = to_fancy_numbers(now.strftime("%H:%M"))
+        new_last_name = f"ᴹᴿ ⏰{fancy_time}"
         try:
-            await client(UpdateProfileRequest(last_name=f"ᴹᴿ ⏰{fancy_time}"))
+            await client(UpdateProfileRequest(last_name=new_last_name))
+            print(f"🕒 فامیلی با ساعت {new_last_name} آپدیت شد")
+        except Exception as e:
+            print(f"❌ خطا در آپدیت فامیلی: {e}")
+        await asyncio.sleep(300)  # ۵ دقیقه
+
+@client.on(events.NewMessage())
+async def handle_commands(event):
+    global response_delay, last_fosh_index
+    # فقط ادمین مجاز
+    if event.sender_id != admin_id:
+        return
+
+    text = event.raw_text.strip()
+    lower = text.lower()
+
+    # اضافه کردن دشمن (ریپلای شده به کاربر)
+    if lower == ".دشمن":
+        replied = await event.get_reply_message()
+        if not replied:
+            await event.edit("❌ لطفا روی پیام کاربر ریپلای کنید.")
+            return
+        user_id = replied.sender_id
+        if user_id in enemyall_list:
+            await event.edit("⚠️ این کاربر قبلا دشمن ثبت شده بود.")
+        else:
+            enemyall_list.append(user_id)
+            save_list(enemy_file, enemyall_list)
+            await event.edit("✅ دشمن با موفقیت اضافه شد.")
+
+    # حذف دشمن (ریپلای)
+    elif lower == ".حذف":
+        replied = await event.get_reply_message()
+        if not replied:
+            await event.edit("❌ لطفا روی پیام کاربر ریپلای کنید.")
+            return
+        user_id = replied.sender_id
+        if user_id not in enemyall_list:
+            await event.edit("⚠️ این کاربر در لیست دشمنان نیست.")
+        else:
+            enemyall_list.remove(user_id)
+            save_list(enemy_file, enemyall_list)
+            await event.edit("✅ دشمن با موفقیت حذف شد.")
+
+    # نمایش لیست دشمنان
+    elif lower == ".لیست دشمن":
+        if not enemyall_list:
+            await event.edit("لیست دشمنان خالی است.")
+        else:
+            msg = "💀 لیست دشمنان:\n"
+            for uid in enemyall_list:
+                try:
+                    user = await client.get_entity(uid)
+                    msg += f"- {user.first_name} (ID: {uid})\n"
+                except:
+                    msg += f"- [ID: {uid}] (حذف شده یا نامشخص)\n"
+            await event.edit(msg)
+
+    # افزودن فحش جدید
+    elif lower.startswith(".فحش "):
+        new_fosh = text[6:].strip()
+        if not new_fosh:
+            await event.edit("❌ لطفا یک فحش معتبر بعد از دستور وارد کنید.")
+            return
+        if new_fosh in foshall_list:
+            await event.edit("⚠️ این فحش قبلا ثبت شده است.")
+        else:
+            foshall_list.append(new_fosh)
+            save_list(fosh_file, foshall_list)
+            await event.edit(f"✅ فحش '{new_fosh}' با موفقیت اضافه شد.")
+
+    # نمایش لیست فحش‌ها
+    elif lower == ".لیست فحش":
+        if not foshall_list:
+            await event.edit("لیست فحش‌ها خالی است.")
+        else:
+            msg = "📝 لیست فحش‌ها:\n"
+            for fosh in foshall_list:
+                msg += f"- {fosh}\n"
+            await event.edit(msg)
+
+    # پاک کردن کل لیست دشمنان
+    elif lower == ".پاکسازی دشمنان":
+        enemyall_list.clear()
+        save_list(enemy_file, enemyall_list)
+        await event.edit("لیست دشمنان پاکسازی شد.")
+
+    # پاک کردن کل فحش‌ها
+    elif lower == ".پاکسازی فحش":
+        foshall_list.clear()
+        save_list(fosh_file, foshall_list)
+        await event.edit("لیست فحش‌ها پاکسازی شد.")
+
+    # تغییر تاخیر پاسخ
+    elif lower.startswith(".تاخیر "):
+        try:
+            sec = int(text.split()[1])
+            if sec < 0:
+                await event.edit("❌ عدد وارد شده باید مثبت باشد.")
+                return
+            response_delay = sec
+            await event.edit(f"⌛️ تاخیر پاسخ به {sec} ثانیه تنظیم شد.")
         except:
-            pass
-        await asyncio.sleep(300)
+            await event.edit("❌ لطفا یک عدد صحیح بعد از دستور وارد کنید.")
 
-def register_handlers(client):
-    @client.on(events.NewMessage(from_users=ADMIN_ID))
-    async def admin_commands(event):
-        global last_fosh_index, RESPONSE_DELAY
+    # کمک (دستورات)
+    elif lower == ".کمک":
+        help_text = (
+            "📜 دستورات شیطانی 🔥:\n"
+            ".دشمن (ریپلای) - اضافه کردن دشمن\n"
+            ".حذف (ریپلای) - حذف دشمن\n"
+            ".لیست دشمن - نمایش لیست دشمنان\n"
+            ".فحش متن - افزودن فحش جدید\n"
+            ".لیست فحش - نمایش فحش‌ها\n"
+            ".پاکسازی دشمنان - حذف کل دشمنان\n"
+            ".پاکسازی فحش - حذف کل فحش‌ها\n"
+            ".تاخیر عدد - تنظیم تاخیر پاسخ (ثانیه)\n"
+            ".کمک - دیدن این پیام\n"
+        )
+        await event.edit(help_text)
 
-        text = event.raw_text.strip()
-        lower = text.lower()
+@client.on(events.NewMessage())
+async def check_enemy_and_reply(event):
+    global last_fosh_index, response_delay
+    # نادیده گرفتن پیام‌های ادمین
+    if event.sender_id == admin_id:
+        return
 
-        if lower == ".دشمن":
-            replied = await event.get_reply_message()
-            if replied:
-                uid = replied.sender_id
-                if uid not in enemy_list:
-                    enemy_list.append(uid)
-                    save_list(ENEMY_FILE, enemy_list)
-                    await event.edit("💀 دشمن اضافه شد!")
-                else:
-                    await event.edit("⚠️ قبلاً دشمن بوده.")
-            return
+    # اگر فرستنده دشمن باشه و فحش داریم
+    if event.sender_id in enemyall_list and foshall_list:
+        # انتخاب فحش بعدی بدون تکرار
+        last_fosh_index += 1
+        if last_fosh_index >= len(foshall_list):
+            last_fosh_index = 0
+        reply_text = foshall_list[last_fosh_index]
 
-        if lower == ".حذف":
-            replied = await event.get_reply_message()
-            if replied:
-                uid = replied.sender_id
-                if uid in enemy_list:
-                    enemy_list.remove(uid)
-                    save_list(ENEMY_FILE, enemy_list)
-                    await event.edit("🗑 دشمن حذف شد!")
-                else:
-                    await event.edit("🚫 تو لیست دشمن نیست.")
-            return
+        # تایمر تاخیر پاسخ (مقدارش قابل تنظیم است)
+        await asyncio.sleep(response_delay)
+        await event.reply(reply_text)
 
-        if lower == ".خفه":
-            replied = await event.get_reply_message()
-            if replied:
-                uid = replied.sender_id
-                if uid not in silent_list:
-                    silent_list.append(uid)
-                    save_list(SILENT_FILE, silent_list)
-                    await event.edit("🔇 زیپ دهنش کشیده شد!")
-            return
+@client.on(events.ChatAction)
+async def welcome(event):
+    if event.user_joined or event.user_added:
+        user = await event.get_user()
+        now = datetime.now()
+        time_str = now.strftime("%H:%M")
+        fancy_time = to_fancy_numbers(time_str)
 
-        if lower == ".نوخفه":
-            replied = await event.get_reply_message()
-            if replied:
-                uid = replied.sender_id
-                if uid in silent_list:
-                    silent_list.remove(uid)
-                    save_list(SILENT_FILE, silent_list)
-                    await event.edit("🔊 از خفه در اومد!")
-            return
+        first = user.first_name or ""
+        last = user.last_name or ""
 
-        if lower.startswith(".فحش "):
-            new_fosh = text[6:].strip()
-            if new_fosh and new_fosh not in fosh_list:
-                fosh_list.append(new_fosh)
-                save_list(FOSH_FILE, fosh_list)
-                await event.edit("☑️ فحش اضافه شد!")
-            return
+        if last:
+            last = f"{last} ⏰{fancy_time}"
+        else:
+            last = ""
 
-        if lower == ".لیست دشمنان":
-            msg = "💀 لیست دشمنان:\n" + "\n".join(map(str, enemy_list)) if enemy_list else "❌ خالی"
-            await event.edit(msg)
-            return
+        welcome_text = f"🔥 خوش آمدی {first} {last}\n🔥 توسعه‌دهنده: arshiya_efootball"
+        await event.reply(welcome_text)
 
-        if lower == ".لیست فحش ها":
-            msg = "📝 لیست فحش‌ها:\n" + "\n".join(fosh_list) if fosh_list else "❌ خالی"
-            await event.edit(msg)
-            return
-
-        if lower.startswith(".بمب "):
-            try:
-                count = int(text.split()[1])
-            except:
-                count = 5
-            replied = await event.get_reply_message()
-            if replied:
-                uid = replied.sender_id
-                for _ in range(count):
-                    await event.respond(random.choice(fosh_list))
-            await event.edit(f"💣 بمب {count} تایی ارسال شد!")
-            return
-
-        if lower == ".کمک":
-            await event.edit(
-                ".کمک\n.دشمن\n.حذف\n.خفه\n.نوخفه\n.بمب <تعداد>\n.فحش <متن>\n.لیست دشمنان\n.لیست فحش ها"
-            )
-
-    @client.on(events.NewMessage())
-    async def auto_reply(event):
-        global last_fosh_index
-        if event.sender_id in enemy_list and fosh_list:
-            last_fosh_index = (last_fosh_index + 1) % len(fosh_list)
-            await asyncio.sleep(RESPONSE_DELAY)
-            await event.reply(fosh_list[last_fosh_index])
-
-        if event.sender_id in silent_list:
-            await event.delete()
-
-    @client.on(events.ChatAction)
-    async def welcome(event):
-        if event.user_joined or event.user_added:
-            user = await event.get_user()
-            fancy_time = to_fancy_numbers(datetime.now().strftime("%H:%M"))
-            await event.reply(f"🔥 خوش اومدی {user.first_name} ⏰{fancy_time}")
-
-    asyncio.create_task(update_last_name_with_time(client))
-
-# ===== اجرای همه =====
 async def main():
-    asyncio.create_task(asyncio.to_thread(bot.polling, none_stop=True))
-    await start_self_clients()
+    await client.start()
+    print("🦹‍♂️ اکانت شخصی شروع شد، در خدمتت هستم...")
+    asyncio.create_task(update_last_name_with_time())
+    await client.run_until_disconnected()
 
 if __name__ == "__main__":
     asyncio.run(main())
