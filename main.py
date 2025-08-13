@@ -210,7 +210,7 @@ async def welcome(event):
         else:
             last = ""
 
-        welcome_text = f"🔥 خوش آمدی {first} {last}\n🔥 توسعه‌دهنده: arshiya_efootball"
+        welcome_text = f"🔥 خوش آمدی {first} {last}\n🔥 توسعه‌دهنده: @arshiya_efootball"
         await event.reply(welcome_text)
 
 async def main():
