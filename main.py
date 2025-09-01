@@ -8,7 +8,7 @@ import os
 # --- تنظیمات ---
 api_id = 12701321
 api_hash = "83995b97cd109d02c1ead50c9f6f5605"
-admin_id = 8055273756
+admin_id = 5990546826
 SESSION_NAME = "my_session"
 
 # فایل‌ها
