@@ -5,68 +5,49 @@ from datetime import datetime
 import json
 import os
 
-# تنظیمات اصلی
+# --- تنظیمات ---
 api_id = 12701321
 api_hash = "83995b97cd109d02c1ead50c9f6f5605"
-admin_id = 5990546826
+admin_id = 8055273756
 SESSION_NAME = "my_session"
 
 # فایل‌ها
 fosh_file = "fosh.json"
 enemy_file = "enemy.json"
+mute_file = "mute.json"
 
-# تاخیر پیش‌فرض
 response_delay = 3
 
-# تبدیل اعداد به فونت بالا
-def to_fancy_numbers(text):
-    fancy_digits = {
-        "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
-        "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹", ":": ":"
-    }
-    return "".join(fancy_digits.get(ch, ch) for ch in text)
-
-# لود لیست از فایل (با جلوگیری از خطا)
+# --- مدیریت فایل‌ها ---
 def load_list(filename):
-    try:
-        if os.path.exists(filename):
-            with open(filename, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    return data
-    except (json.JSONDecodeError, OSError):
-        pass
+    if os.path.exists(filename):
+        with open(filename, "r", encoding="utf-8") as f:
+            return json.load(f)
     return []
 
-# ذخیره لیست
 def save_list(filename, data):
-    try:
-        with open(filename, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except OSError as e:
-        print(f"[خطا ذخیره‌سازی] {filename}: {e}")
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
-# لود اولیه
 foshall_list = load_list(fosh_file)
 enemyall_list = load_list(enemy_file)
+mute_list = load_list(mute_file)
 
 last_fosh_index = -1
+
 client = TelegramClient(SESSION_NAME, api_id, api_hash)
 
-# آپدیت فامیلی هر ۵ دقیقه
+# --- آپدیت فامیلی با ساعت ---
 async def update_last_name_with_time():
     while True:
-        now = datetime.now()
-        fancy_time = to_fancy_numbers(now.strftime("%H:%M"))
-        new_last_name = f"ᴹᴿ ⏰{fancy_time}"
+        now = datetime.now().strftime("%H:%M")
         try:
-            await client(UpdateProfileRequest(last_name=new_last_name))
-            print(f"🕒 فامیلی با ساعت {new_last_name} آپدیت شد")
+            await client(UpdateProfileRequest(last_name=f"ᴹᴿ ⏰{now}"))
         except Exception as e:
             print(f"❌ خطا در آپدیت فامیلی: {e}")
         await asyncio.sleep(300)
 
-# دستورات ادمین
+# --- دستورات ---
 @client.on(events.NewMessage())
 async def handle_commands(event):
     global response_delay, last_fosh_index
@@ -76,115 +57,180 @@ async def handle_commands(event):
     text = event.raw_text.strip()
     lower = text.lower()
 
-    if lower == ".دشمن":
+    # حالت خفه
+    if lower == ".خفه":
         replied = await event.get_reply_message()
         if not replied:
-            await event.edit("❌ لطفا روی پیام کاربر ریپلای کنید.")
+            await event.edit("❌ روی پیام کسی ریپلای کن.")
             return
-        uid = int(replied.sender_id)
-        if uid not in enemyall_list:
-            enemyall_list.append(uid)
-            save_list(enemy_file, enemyall_list)
-            await event.edit("✅ دشمن اضافه شد!")
+        user_id = replied.sender_id
+        if user_id in mute_list:
+            await event.edit("⚠️ این کاربر از قبل خفه بود.")
         else:
-            await event.edit("⚠️ قبلاً دشمن بوده.")
+            mute_list.append(user_id)
+            save_list(mute_file, mute_list)
+            await event.edit("✅ کاربر خفه شد.")
+
+    elif lower == ".باز":
+        replied = await event.get_reply_message()
+        if not replied:
+            await event.edit("❌ روی پیام کسی ریپلای کن.")
+            return
+        user_id = replied.sender_id
+        if user_id not in mute_list:
+            await event.edit("⚠️ این کاربر خفه نیست.")
+        else:
+            mute_list.remove(user_id)
+            save_list(mute_file, mute_list)
+            await event.edit("✅ کاربر آزاد شد.")
+
+    # حالت بمب سرعتی
+    elif lower.startswith(".بمب "):
+        try:
+            parts = text.split(maxsplit=2)
+            count = int(parts[1])
+            if count <= 0:
+                await event.edit("❌ عدد باید مثبت باشه.")
+                return
+            if len(parts) < 3:
+                await event.edit("❌ متن رو بعد از عدد بنویس.")
+                return
+            spam_text = parts[2]
+            replied = await event.get_reply_message()
+            await event.edit(f"💣 در حال ارسال {count} پیام...")
+
+            tasks = []
+            for _ in range(count):
+                if replied:
+                    tasks.append(asyncio.create_task(event.respond(spam_text, reply_to=replied.id)))
+                else:
+                    tasks.append(asyncio.create_task(event.respond(spam_text)))
+
+            await asyncio.gather(*tasks)
+        except Exception as e:
+            await event.edit(f"❌ خطا: {e}")
+
+    # دشمن و فحش‌ها
+    elif lower == ".دشمن":
+        replied = await event.get_reply_message()
+        if not replied:
+            await event.edit("❌ روی پیام کسی ریپلای کن.")
+            return
+        user_id = replied.sender_id
+        if user_id in enemyall_list:
+            await event.edit("⚠️ این کاربر از قبل دشمن بود.")
+        else:
+            enemyall_list.append(user_id)
+            save_list(enemy_file, enemyall_list)
+            await event.edit("✅ دشمن اضافه شد.")
 
     elif lower == ".حذف":
         replied = await event.get_reply_message()
         if not replied:
-            await event.edit("❌ لطفا روی پیام کاربر ریپلای کنید.")
+            await event.edit("❌ روی پیام کسی ریپلای کن.")
             return
-        uid = int(replied.sender_id)
-        if uid in enemyall_list:
-            enemyall_list.remove(uid)
+        user_id = replied.sender_id
+        if user_id not in enemyall_list:
+            await event.edit("⚠️ این کاربر دشمن نیست.")
+        else:
+            enemyall_list.remove(user_id)
             save_list(enemy_file, enemyall_list)
             await event.edit("✅ دشمن حذف شد.")
-        else:
-            await event.edit("⚠️ این کاربر دشمن نیست.")
 
     elif lower == ".لیست دشمن":
         if not enemyall_list:
-            await event.edit("💀 لیست دشمنان خالی است.")
+            await event.edit("لیست دشمن خالیه.")
         else:
-            msg = "💀 لیست دشمنان:\n"
-            for uid in enemyall_list:
-                try:
-                    user = await client.get_entity(uid)
-                    msg += f"- {user.first_name} (ID: {uid})\n"
-                except:
-                    msg += f"- [ID: {uid}]\n"
-            await event.edit(msg)
+            try:
+                await event.delete()
+                await client.send_file(event.chat_id, enemy_file, caption="💀 لیست دشمن‌ها")
+            except Exception as e:
+                await event.respond(f"❌ خطا در ارسال فایل: {e}")
 
     elif lower.startswith(".فحش "):
         new_fosh = text[6:].strip()
-        if new_fosh and new_fosh not in foshall_list:
+        if not new_fosh:
+            await event.edit("❌ فحش معتبر وارد کن.")
+            return
+        if new_fosh in foshall_list:
+            await event.edit("⚠️ این فحش قبلا ثبت شده.")
+        else:
             foshall_list.append(new_fosh)
             save_list(fosh_file, foshall_list)
-            await event.edit("☑️ فحش اضافه شد!")
-        else:
-            await event.edit("⚠️ قبلاً اضافه شده یا نامعتبر.")
+            await event.edit(f"✅ '{new_fosh}' اضافه شد.")
 
     elif lower == ".لیست فحش":
         if not foshall_list:
-            await event.edit("📭 لیست فحش‌ها خالی است.")
+            await event.edit("لیست فحش خالیه.")
         else:
-            msg = "📝 لیست فحش‌ها:\n" + "\n".join(f"- {f}" for f in foshall_list)
-            await event.edit(msg)
+            try:
+                await event.delete()
+                await client.send_file(event.chat_id, fosh_file, caption="📝 لیست فحش‌ها")
+            except Exception as e:
+                await event.respond(f"❌ خطا در ارسال فایل: {e}")
 
-    elif lower == ".پاکسازی دشمنان":
-        enemyall_list.clear()
-        save_list(enemy_file, enemyall_list)
-        await event.edit("🧹 لیست دشمنان پاک شد.")
-
-    elif lower == ".پاکسازی فحش":
-        foshall_list.clear()
-        save_list(fosh_file, foshall_list)
-        await event.edit("🧹 لیست فحش‌ها پاک شد.")
+    elif lower == ".لیست خفه":
+        if not mute_list:
+            await event.edit("لیست خفه خالیه.")
+        else:
+            try:
+                await event.delete()
+                await client.send_file(event.chat_id, mute_file, caption="🔇 لیست خفه‌ها")
+            except Exception as e:
+                await event.respond(f"❌ خطا در ارسال فایل: {e}")
 
     elif lower.startswith(".تاخیر "):
         try:
             sec = int(text.split()[1])
-            if sec >= 0:
-                response_delay = sec
-                await event.edit(f"⌛ تاخیر روی {sec} ثانیه تنظیم شد.")
-            else:
-                await event.edit("❌ عدد باید مثبت باشد.")
+            response_delay = sec
+            await event.edit(f"⌛ تاخیر روی {sec} ثانیه تنظیم شد.")
         except:
-            await event.edit("❌ عدد نامعتبر.")
+            await event.edit("❌ عدد معتبر وارد کن.")
 
     elif lower == ".کمک":
-        await event.edit(
+        help_text = (
             "📜 دستورات:\n"
-            ".دشمن (ریپلای)\n.حذف (ریپلای)\n.لیست دشمن\n"
-            ".فحش متن\n.لیست فحش\n.پاکسازی دشمنان\n.پاکسازی فحش\n"
-            ".تاخیر عدد\n.کمک"
+            ".خفه (ریپلای) - خفه کردن کاربر\n"
+            ".باز (ریپلای) - آزاد کردن کاربر\n"
+            ".بمب تعداد متن - اسپم سرعتی\n"
+            ".دشمن (ریپلای) - اضافه کردن دشمن\n"
+            ".حذف (ریپلای) - حذف دشمن\n"
+            ".لیست دشمن - ارسال فایل دشمن‌ها\n"
+            ".فحش متن - افزودن فحش\n"
+            ".لیست فحش - ارسال فایل فحش‌ها\n"
+            ".لیست خفه - ارسال فایل لیست خفه\n"
+            ".تاخیر عدد - تنظیم تاخیر\n"
+            ".کمک - این پیام\n"
         )
+        await event.edit(help_text)
 
-# جواب به دشمن
+# --- حذف پیام‌های افراد خفه ---
+@client.on(events.NewMessage())
+async def mute_handler(event):
+    if event.sender_id in mute_list:
+        try:
+            await event.delete()
+        except:
+            pass
+
+# --- دشمن و فحش ---
 @client.on(events.NewMessage())
 async def check_enemy_and_reply(event):
     global last_fosh_index
     if event.sender_id == admin_id:
         return
     if event.sender_id in enemyall_list and foshall_list:
-        last_fosh_index = (last_fosh_index + 1) % len(foshall_list)
+        last_fosh_index += 1
+        if last_fosh_index >= len(foshall_list):
+            last_fosh_index = 0
+        reply_text = foshall_list[last_fosh_index]
         await asyncio.sleep(response_delay)
-        await event.reply(foshall_list[last_fosh_index])
+        await event.reply(reply_text)
 
-# پیام خوش‌آمد
-@client.on(events.ChatAction)
-async def welcome(event):
-    if event.user_joined or event.user_added:
-        user = await event.get_user()
-        fancy_time = to_fancy_numbers(datetime.now().strftime("%H:%M"))
-        name = user.first_name or ""
-        welcome_text = f"🔥 خوش آمدی {name} ⏰{fancy_time}\n🔥 توسعه‌دهنده: arshiya_efootball"
-        await event.reply(welcome_text)
-
-# شروع
+# --- ران اصلی ---
 async def main():
     await client.start()
-    print("✅ ربات شخصی فعال شد")
+    print("🦹‍♂️ بات روشن شد...")
     asyncio.create_task(update_last_name_with_time())
     await client.run_until_disconnected()
 
